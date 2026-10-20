@@ -78,18 +78,9 @@
 
     const params = new URLSearchParams({ property: propSelect.value, checkin: checkin.value, checkout: checkout.value, guests: $("#guests").value });
     if (SITE.reservationUrl) { window.open(`${SITE.reservationUrl}?${params}`, "_blank", "noopener"); return; }
-
-    const nights = Math.round((new Date(checkout.value) - new Date(checkin.value)) / 86400000);
-    const targets = propSelect.value ? PROPERTIES.filter((p) => p.id === propSelect.value) : PROPERTIES;
-    openModal(`
-      <div class="detail__body">
-        <h2 class="detail__name" id="modalTitle">空室検索</h2>
-        <p class="result__summary">${esc(checkin.value)} 〜 ${esc(checkout.value)}（${nights}泊）／ ${esc($("#guests").value)}名</p>
-        <p>オンライン予約システムは準備中です。お手数ですが、お電話にてご予約ください。</p>
-        <dl class="detail__info">${targets.map((p) => `<dt>${esc(p.name)}</dt><dd><a href="${telHref(p.phone)}">${esc(p.phone)}</a></dd>`).join("")}</dl>
-        <div class="detail__actions"><a class="btn btn--accent" href="${telHref(SITE.phone)}">予約センターに電話する</a></div>
-      </div>`);
+    window.Booking.start({ propertyId: propSelect.value, checkin: checkin.value, checkout: checkout.value, guests: $("#guests").value });
   });
+  $$("[data-open-lookup]").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); setTimeout(window.Booking.lookup); }));
 
   // Purposes
   $("#purposeList").innerHTML = PURPOSES.map((p) => `
@@ -172,7 +163,7 @@
   const modal = $("#modal");
   let lastFocus;
   const openModal = (html) => {
-    lastFocus = document.activeElement;
+    if (!modal.classList.contains("is-open")) lastFocus = document.activeElement;
     $("#modalBody").innerHTML = html;
     modal.classList.add("is-open");
     modal.setAttribute("aria-hidden", "false");
@@ -185,6 +176,7 @@
     document.body.classList.remove("is-locked");
     lastFocus?.focus();
   };
+  window.App = { openModal, closeModal };
   $$("[data-close]", modal).forEach((el) => el.addEventListener("click", closeModal));
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;

@@ -11,6 +11,9 @@ window.SITE = {
   email: "info@example.com",
   address: "〒000-0000 〇〇県〇〇市〇〇 0-0-0",
   reservationUrl: "",
+  checkinTime: "15:00",
+  checkoutTime: "11:00",
+  cancelPolicy: "宿泊日の7日前まで無料。6〜2日前は宿泊料金の30%、前日は50%、当日・無連絡は100%を申し受けます。",
   company: [
     ["会社名", "株式会社〇〇〇〇"],
     ["設立", "0000年0月"],
@@ -50,6 +53,15 @@ window.REGIONS = [
   { id: "chubu", label: "中部" },
   { id: "kinki", label: "近畿" },
   { id: "kyushu", label: "九州・沖縄" }
+];
+
+// 客室タイプ（施設ごとに rooms: [...] を書くと、その施設だけ上書きできます）
+// price = 1泊1室あたりの税込料金 / capacity = 定員 / stock = 部屋数
+window.DEFAULT_ROOMS = [
+  { id: "std", name: "スタンダード", capacity: 2, price: 28000, stock: 5, size: "28㎡", desc: "落ち着いた和モダンの客室。", img: "https://picsum.photos/seed/room-std/600/400" },
+  { id: "dlx", name: "デラックス", capacity: 3, price: 42000, stock: 3, size: "40㎡", desc: "景色を望むゆとりの客室。", img: "https://picsum.photos/seed/room-dlx/600/400" },
+  { id: "fam", name: "ファミリー", capacity: 5, price: 56000, stock: 2, size: "55㎡", desc: "家族でくつろげる和洋室。", img: "https://picsum.photos/seed/room-fam/600/400" },
+  { id: "ste", name: "スイート", capacity: 4, price: 98000, stock: 1, size: "80㎡", desc: "露天風呂付きの特別室。", img: "https://picsum.photos/seed/room-ste/600/400" }
 ];
 
 window.PROPERTIES = [
