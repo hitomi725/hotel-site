@@ -1,5 +1,6 @@
 (() => {
   const { SITE, PROPERTIES, DEFAULT_ROOMS } = window;
+  const API = SITE.bookingApiUrl;
   const KEY = "hb_bookings_v1";
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const yen = (n) => "¥" + Number(n).toLocaleString("ja-JP");
@@ -8,9 +9,7 @@
   const WEEK = "日月火水木金土";
   const fmtDate = (s) => { const d = parse(s); return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（${WEEK[d.getDay()]}）`; };
   const telHref = (n) => "tel:" + String(n).replace(/[^\d+]/g, "");
-
-  const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } };
-  const save = (list) => { try { localStorage.setItem(KEY, JSON.stringify(list)); return true; } catch { return false; } };
+  const NET_ERROR = `通信エラーが発生しました。時間をおいて再度お試しいただくか、お電話（${SITE.phone}）でお問い合わせください。`;
 
   const roomsOf = (p) => p.rooms || DEFAULT_ROOMS;
   const findRoom = (pid, rid) => {
@@ -22,41 +21,99 @@
     for (let d = parse(ci); iso(d) < co; d.setDate(d.getDate() + 1)) out.push(iso(d));
     return out;
   };
-  const remaining = (pid, room, ci, co) => {
-    const active = load().filter((b) => b.status === "confirmed" && b.propertyId === pid && b.roomId === room.id);
-    const peak = Math.max(0, ...nightsOf(ci, co).map((n) => active.filter((b) => b.checkin <= n && n < b.checkout).length));
-    return room.stock - peak;
+
+  // ---- Storage: Google Apps Script API, or this browser as a fallback ----
+  const loadLocal = () => { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } };
+  const saveLocal = (list) => { try { localStorage.setItem(KEY, JSON.stringify(list)); return true; } catch { return false; } };
+  const bookedFrom = (list, ci, co) => {
+    const map = {};
+    const nights = nightsOf(ci, co);
+    list.filter((b) => b.status === "confirmed").forEach((b) => { const k = `${b.propertyId}|${b.roomId}`; map[k] = map[k] || []; map[k].push(b); });
+    return Object.fromEntries(Object.entries(map).map(([k, bs]) =>
+      [k, Math.max(0, ...nights.map((n) => bs.filter((b) => b.checkin <= n && n < b.checkout).length))]));
+  };
+  const post = async (payload) => {
+    const r = await fetch(API, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
   };
   const newId = () => {
     const a = new Uint8Array(3);
     crypto.getRandomValues(a);
-    const rand = [...a].map((x) => x.toString(36).padStart(2, "0")).join("").slice(0, 5).toUpperCase();
-    return `R${iso(new Date()).slice(2).replace(/-/g, "")}-${rand}`;
+    return `R${iso(new Date()).slice(2).replace(/-/g, "")}-${[...a].map((x) => x.toString(36).padStart(2, "0")).join("").slice(0, 5).toUpperCase()}`;
+  };
+  const matches = (b, id, email) => b.id.toUpperCase() === id.trim().toUpperCase() && b.guest.email.toLowerCase() === email.trim().toLowerCase();
+
+  const store = API ? {
+    async booked(scope, ci, co) {
+      const r = await fetch(`${API}?${new URLSearchParams({ action: "availability", property: scope || "", checkin: ci, checkout: co })}`);
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error);
+      return j.booked;
+    },
+    create: (b) => post({ action: "create", booking: b }),
+    find: (id, email) => post({ action: "lookup", id, email }),
+    cancel: (id, email) => post({ action: "cancel", id, email })
+  } : {
+    async booked(_, ci, co) { return bookedFrom(loadLocal(), ci, co); },
+    async create(b) {
+      const list = loadLocal();
+      if ((bookedFrom(list, b.checkin, b.checkout)[`${b.propertyId}|${b.roomId}`] || 0) >= b.stock) return { ok: false, error: "full" };
+      const booking = { ...b, id: newId(), status: "confirmed", createdAt: new Date().toISOString() };
+      delete booking.stock;
+      return saveLocal([...list, booking]) ? { ok: true, booking } : { ok: false, error: "storage" };
+    },
+    async find(id, email) {
+      const b = loadLocal().find((x) => matches(x, id, email));
+      return b ? { ok: true, booking: b } : { ok: false, error: "not_found" };
+    },
+    async cancel(id, email) {
+      const list = loadLocal();
+      const b = list.find((x) => matches(x, id, email));
+      if (!b) return { ok: false, error: "not_found" };
+      b.status = "cancelled";
+      b.cancelledAt = new Date().toISOString();
+      saveLocal(list);
+      return { ok: true, booking: b };
+    }
   };
 
+  // ---- UI ----
   const STEPS = ["客室を選ぶ", "お客様情報", "内容の確認", "予約完了"];
   const stepper = (n) => `<ol class="steps" aria-label="予約の手順">${STEPS.map((s, i) =>
     `<li class="${i < n ? "is-done" : i === n ? "is-current" : ""}" ${i === n ? 'aria-current="step"' : ""}><span>${i + 1}</span>${s}</li>`).join("")}</ol>`;
   const stayLine = (d) => `${esc(fmtDate(d.checkin))} 〜 ${esc(fmtDate(d.checkout))}（${d.nights}泊）／ ${d.guests}名`;
+  const loading = (text) => `<p class="booking__loading" role="status"><span class="spinner" aria-hidden="true"></span>${esc(text)}</p>`;
 
   const show = (html) => {
     window.App.openModal(`<div class="detail__body booking">${html}</div>`);
     document.querySelector(".modal__panel").scrollTop = 0;
   };
+  const busy = (btn, text) => { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = text; };
 
   let draft = null;
+  let current = null;
+  let renderSeq = 0;
 
   function start({ propertyId, checkin, checkout, guests }) {
     draft = { scope: propertyId, propertyId, checkin, checkout, guests: Number(guests), nights: nightsOf(checkin, checkout).length, guest: {} };
     renderRooms();
   }
 
-  function renderRooms() {
+  async function renderRooms() {
     const d = draft;
+    const seq = ++renderSeq;
+    const head = `${stepper(0)}<h2 class="detail__name" id="modalTitle">客室を選ぶ</h2><p class="result__summary">${stayLine(d)}</p>`;
+    show(head + loading("空室を確認しています…"));
+    let booked;
+    try { booked = await store.booked(d.scope, d.checkin, d.checkout); }
+    catch { if (seq === renderSeq) show(head + `<p class="booking__error" role="alert">${esc(NET_ERROR)}</p>`); return; }
+    if (seq !== renderSeq) return;
+
     const targets = d.scope ? PROPERTIES.filter((p) => p.id === d.scope) : PROPERTIES;
     const blocks = targets.map((p) => {
       const rows = roomsOf(p).map((r) => {
-        const left = remaining(p.id, r, d.checkin, d.checkout);
+        const left = r.stock - (booked[`${p.id}|${r.id}`] || 0);
         const tooSmall = r.capacity < d.guests;
         const status = tooSmall ? `<span class="room__ng">定員${r.capacity}名まで</span>`
           : left <= 0 ? `<span class="room__ng">満室</span>`
@@ -78,10 +135,7 @@
       return `<section class="room-group"><h3>${esc(p.name)} <small>${esc(p.area)}</small></h3><ul class="rooms">${rows}</ul></section>`;
     }).join("");
     const bigGroup = d.guests > Math.max(...PROPERTIES.flatMap((p) => roomsOf(p).map((r) => r.capacity)));
-    show(`
-      ${stepper(0)}
-      <h2 class="detail__name" id="modalTitle">客室を選ぶ</h2>
-      <p class="result__summary">${stayLine(d)}</p>
+    show(`${head}
       ${bigGroup ? `<p class="booking__note">${d.guests}名様でのご宿泊は複数室のご予約となります。お電話（<a href="${telHref(SITE.phone)}">${esc(SITE.phone)}</a>）にてお問い合わせください。</p>` : ""}
       ${blocks}`);
   }
@@ -158,22 +212,24 @@
       </div>`);
   }
 
-  function confirm() {
+  async function confirm(btn) {
     const d = draft;
     const { property, room } = findRoom(d.propertyId, d.roomId);
-    if (remaining(property.id, room, d.checkin, d.checkout) <= 0) {
-      renderConfirm("申し訳ございません。ただいまこの客室は満室になりました。別の客室をお選びください。");
+    busy(btn, "送信中…");
+    let res;
+    try {
+      res = await store.create({
+        propertyId: property.id, propertyName: property.name, roomId: room.id, roomName: room.name, stock: room.stock,
+        checkin: d.checkin, checkout: d.checkout, nights: d.nights, guests: d.guests, total: room.price * d.nights, guest: { ...d.guest }
+      });
+    } catch { renderConfirm(NET_ERROR); return; }
+    if (!res.ok) {
+      renderConfirm(res.error === "full" ? "申し訳ございません。ただいまこの客室は満室になりました。戻って別の客室をお選びください。"
+        : res.error === "storage" ? "このブラウザでは予約を保存できませんでした。お電話でご予約ください。" : NET_ERROR);
       return;
     }
-    const booking = {
-      id: newId(), status: "confirmed", createdAt: new Date().toISOString(),
-      propertyId: property.id, propertyName: property.name, roomId: room.id, roomName: room.name,
-      checkin: d.checkin, checkout: d.checkout, nights: d.nights, guests: d.guests,
-      total: room.price * d.nights, guest: { ...d.guest }
-    };
-    const saved = save([...load(), booking]);
     draft = null;
-    renderDone(booking, saved);
+    renderDone(res.booking);
   }
 
   const mailHref = (b) => {
@@ -187,7 +243,7 @@
     return `mailto:${SITE.email}?subject=${encodeURIComponent(`【予約】${b.id} ${b.guest.name}様`)}&body=${encodeURIComponent(body)}`;
   };
 
-  function renderDone(b, saved) {
+  function renderDone(b) {
     show(`
       ${stepper(3)}
       <div class="booking__done">
@@ -197,7 +253,6 @@
         <p class="booking__id">予約番号<strong>${esc(b.id)}</strong></p>
         <p class="booking__small">予約の確認・キャンセルには、予約番号とメールアドレスが必要です。</p>
       </div>
-      ${saved ? "" : `<p class="booking__error" role="alert">このブラウザでは予約データを保存できませんでした。下のボタンから予約内容を必ずホテルへお送りください。</p>`}
       <dl class="detail__info booking__dl">
         <dt>施設</dt><dd>${esc(b.propertyName)}・${esc(b.roomName)}</dd>
         <dt>日程</dt><dd>${esc(fmtDate(b.checkin))} 〜 ${esc(fmtDate(b.checkout))}（${b.nights}泊）</dd>
@@ -205,8 +260,8 @@
         <dt>料金</dt><dd>${yen(b.total)}（税込・現地払い）</dd>
       </dl>
       <div class="detail__actions">
-        <a class="btn btn--accent" href="${esc(mailHref(b))}">予約内容をホテルへメール送信</a>
-        <button type="button" class="btn btn--ghost" data-print>印刷する</button>
+        ${API ? "" : `<a class="btn btn--accent" href="${esc(mailHref(b))}">予約内容をホテルへメール送信</a>`}
+        <button type="button" class="btn btn--ghost" data-print>予約内容を印刷する</button>
       </div>`);
   }
 
@@ -222,12 +277,12 @@
       </form>`);
   }
 
-  function renderBooking(b, askCancel = false) {
-    const today = iso(new Date());
-    const cancellable = b.status === "confirmed" && b.checkin >= today;
+  function renderBooking(b, askCancel = false, error = "") {
+    const cancellable = b.status === "confirmed" && b.checkin >= iso(new Date());
     const statusLabel = b.status === "cancelled" ? `<span class="badge badge--off">キャンセル済み</span>` : `<span class="badge">予約確定</span>`;
     show(`
       <h2 class="detail__name" id="modalTitle">ご予約内容 ${statusLabel}</h2>
+      ${error ? `<p class="booking__error" role="alert">${esc(error)}</p>` : ""}
       <dl class="detail__info booking__dl">
         <dt>予約番号</dt><dd>${esc(b.id)}</dd>
         <dt>施設</dt><dd>${esc(b.propertyName)}・${esc(b.roomName)}</dd>
@@ -240,59 +295,59 @@
       <div class="detail__actions">
         <button type="button" class="btn btn--ghost" data-lookup>別の予約を確認</button>
         ${cancellable ? (askCancel
-          ? `<button type="button" class="btn btn--danger" data-cancel-do="${esc(b.id)}">キャンセルを確定する</button>`
-          : `<button type="button" class="btn btn--ghost btn--danger-text" data-cancel-ask="${esc(b.id)}">この予約をキャンセル</button>`) : ""}
+          ? `<button type="button" class="btn btn--danger" data-cancel-do>キャンセルを確定する</button>`
+          : `<button type="button" class="btn btn--ghost btn--danger-text" data-cancel-ask>この予約をキャンセル</button>`) : ""}
       </div>`);
   }
 
   const body = document.getElementById("modalBody");
-  body.addEventListener("click", (e) => {
+  body.addEventListener("click", async (e) => {
     const t = e.target;
     const pick = t.closest("[data-pick]");
     if (pick) {
-      const [pid, rid] = pick.dataset.pick.split("|");
-      draft.propertyId = pid;
-      draft.roomId = rid;
+      [draft.propertyId, draft.roomId] = pick.dataset.pick.split("|");
       renderGuest();
       return;
     }
     const back = t.closest("[data-back]");
-    if (back) {
-      if (back.dataset.back === "rooms") renderRooms();
-      else renderGuest();
-      return;
-    }
-    if (t.closest("[data-confirm]")) { confirm(); return; }
+    if (back) { back.dataset.back === "rooms" ? renderRooms() : renderGuest(); return; }
+    const conf = t.closest("[data-confirm]");
+    if (conf) { confirm(conf); return; }
     if (t.closest("[data-print]")) { window.print(); return; }
     if (t.closest("[data-lookup]")) { lookup(); return; }
-    const ask = t.closest("[data-cancel-ask]");
-    if (ask) { renderBooking(load().find((b) => b.id === ask.dataset.cancelAsk), true); return; }
+    if (t.closest("[data-cancel-ask]")) { renderBooking(current.booking, true); return; }
     const doIt = t.closest("[data-cancel-do]");
     if (doIt) {
-      const list = load();
-      const b = list.find((x) => x.id === doIt.dataset.cancelDo);
-      b.status = "cancelled";
-      b.cancelledAt = new Date().toISOString();
-      save(list);
-      renderBooking(b);
+      busy(doIt, "処理中…");
+      try {
+        const res = await store.cancel(current.id, current.email);
+        if (!res.ok) throw new Error(res.error);
+        current.booking = res.booking;
+        renderBooking(res.booking);
+      } catch { renderBooking(current.booking, false, NET_ERROR); }
     }
   });
   body.addEventListener("change", (e) => {
     if (e.target.id === "agree") body.querySelector("[data-confirm]").disabled = !e.target.checked;
   });
-  body.addEventListener("submit", (e) => {
+  body.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const fd = Object.fromEntries(new FormData(e.target));
-    Object.keys(fd).forEach((k) => { fd[k] = String(fd[k]).trim(); });
-    if (e.target.id === "guestForm") {
+    const form = e.target;
+    const fd = Object.fromEntries([...new FormData(form)].map(([k, v]) => [k, String(v).trim()]));
+    if (form.getAttribute("id") === "guestForm") {
       draft.guest = fd;
       const errors = validate(fd);
       if (Object.keys(errors).length) renderGuest(errors);
       else renderConfirm();
-    } else if (e.target.id === "lookupForm") {
-      const b = load().find((x) => x.id.toUpperCase() === fd.bookingId.toUpperCase() && x.guest.email.toLowerCase() === fd.email.toLowerCase());
-      if (b) renderBooking(b);
-      else lookup("該当するご予約が見つかりません。予約番号とメールアドレスをご確認ください。", fd);
+    } else if (form.getAttribute("id") === "lookupForm") {
+      if (!fd.bookingId || !fd.email) { lookup("予約番号とメールアドレスを入力してください。", fd); return; }
+      busy(form.querySelector("[type=submit]"), "確認中…");
+      try {
+        const res = await store.find(fd.bookingId, fd.email);
+        if (!res.ok) { lookup("該当するご予約が見つかりません。予約番号とメールアドレスをご確認ください。", fd); return; }
+        current = { id: fd.bookingId, email: fd.email, booking: res.booking };
+        renderBooking(res.booking);
+      } catch { lookup(NET_ERROR, fd); }
     }
   });
 

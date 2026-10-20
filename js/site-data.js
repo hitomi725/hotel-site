@@ -11,6 +11,8 @@ window.SITE = {
   email: "info@example.com",
   address: "〒000-0000 〇〇県〇〇市〇〇 0-0-0",
   reservationUrl: "",
+  // Google Apps Script のウェブアプリURL（予約をスプレッドシートに記録）
+  bookingApiUrl: "https://script.google.com/macros/s/AKfycbypNBDyoPfGDTjCyVirJSvQygwPRqRYjezl7WSkBz-LyOdvNMeBqZ5dWskjiWOxZJxT/exec",
   checkinTime: "15:00",
   checkoutTime: "11:00",
   cancelPolicy: "宿泊日の7日前まで無料。6〜2日前は宿泊料金の30%、前日は50%、当日・無連絡は100%を申し受けます。",

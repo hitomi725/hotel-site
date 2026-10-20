@@ -327,6 +327,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .booking__error { background: #fbeceb; color: var(--danger); border-radius: 8px; padding: 12px 14px; font-size: .88rem; }
 .booking__note { background: var(--tint); border-radius: 8px; padding: 12px 14px; font-size: .88rem; }
 .booking__done { text-align: center; }
+.booking__loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 32px 0; color: var(--muted); }
+.spinner { width: 20px; height: 20px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .booking__check { width: 56px; height: 56px; margin: 0 auto 8px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 1.6rem; }
 .booking__id { margin: 16px auto 4px; display: inline-grid; padding: 12px 28px; border: 1px dashed var(--accent); border-radius: 10px; font-size: .8rem; color: var(--muted); }
 .booking__id strong { font-size: 1.5rem; color: var(--ink); letter-spacing: .1em; }
